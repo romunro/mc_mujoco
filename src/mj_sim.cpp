@@ -793,7 +793,7 @@ void MjSimImpl::startSimulation()
   setSimulationInitialState();
 }
 
-void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model, mjData * data)
+void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model, mjData * data, bool disturbance)
 {
 
   for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
@@ -875,73 +875,18 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
   gc->setWrenches(name, wrenches);
 
   // Joint sensor updates
+  auto fakeTorques = torques;
+  if(name.compare("kinova") == 0 and disturbance) fakeTorques[5] = fakeTorques[5] - 5.0;
   gc->setEncoderValues(name, encoders);
   gc->setEncoderVelocities(name, alphas);
-  gc->setJointTorques(name, torques);
-  if(is_external_torques_enabled_changed != use_external_torques)
-  {
-    // Ensure mc-rtc sees zero external torques when disabled
-    tau_ext.setZero();
-    robot.setExternalTorques(tau_ext);
-    realRobot.setExternalTorques(tau_ext);
-    is_external_torques_enabled_changed = use_external_torques;
-  }
-  if(use_external_torques)
-  {
-    const auto & mb = robot.mb();
-    std::vector<std::vector<double>> tau_ext_mbc(mb.nrJoints());
-    for(int j = 0; j < mb.nrJoints(); ++j)
-    {
-      tau_ext_mbc[j].assign(mb.joint(j).dof(), 0.0);
-    }
-
-    // Floating base: MuJoCo free joint DoF layout is [vx, vy, vz, wx, wy, wz] (linear then angular)
-    // RBDyn Free joint DoF layout is [wx, wy, wz, vx, vy, vz] (angular then linear)
-    // Both are in world frame so only a reordering is needed, no rotation
-    if(root_qvel_idx != -1 && root_joint_type == mjJNT_FREE && mb.joint(0).dof() == 6)
-    {
-      // MuJoCo indices: linear=[0,1,2], angular=[3,4,5]
-      // RBDyn indices:  angular=[0,1,2], linear=[3,4,5]
-      // Total external/passive force acting on the free joint (in world frame)
-      double fx = data->qfrc_constraint[root_qvel_idx + 0] + data->qfrc_passive[root_qvel_idx + 0];
-      double fy = data->qfrc_constraint[root_qvel_idx + 1] + data->qfrc_passive[root_qvel_idx + 1];
-      double fz = data->qfrc_constraint[root_qvel_idx + 2] + data->qfrc_passive[root_qvel_idx + 2];
-
-      double wx = data->qfrc_constraint[root_qvel_idx + 3] + data->qfrc_passive[root_qvel_idx + 3];
-      double wy = data->qfrc_constraint[root_qvel_idx + 4] + data->qfrc_passive[root_qvel_idx + 4];
-      double wz = data->qfrc_constraint[root_qvel_idx + 5] + data->qfrc_passive[root_qvel_idx + 5];
-
-      // Assign to RBDyn world-frame spatial force vector format [Angular, Linear]
-      tau_ext_mbc[0][0] = wx;
-      tau_ext_mbc[0][1] = wy;
-      tau_ext_mbc[0][2] = wz;
-      tau_ext_mbc[0][3] = fx;
-      tau_ext_mbc[0][4] = fy;
-      tau_ext_mbc[0][5] = fz;
-    }
-
-    // 1-DoF actuated joints
-    for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
-    {
-      int jIndex = mj_to_mbc[i];
-      if(jIndex == -1) continue;
-      if(mb.joint(jIndex).dof() != 1) continue;
-      int dof_addr = model->jnt_dofadr[mj_jnt_ids[i]];
-      tau_ext_mbc[jIndex][0] = data->qfrc_constraint[dof_addr] + data->qfrc_passive[dof_addr];
-    }
-
-    tau_ext.setZero();
-    updateVector(tau_ext_mbc, tau_ext);
-    robot.setExternalTorques(tau_ext);
-    realRobot.setExternalTorques(tau_ext);
-  }
+  gc->setJointTorques(name, fakeTorques);
 }
 
-void MjSimImpl::updateData()
+void MjSimImpl::updateData(bool disturbance)
 {
   for(auto & r : robots)
   {
-    r.updateSensors(controller.get(), model, data);
+    r.updateSensors(controller.get(), model, data, disturbance);
   }
 }
 
@@ -968,7 +913,8 @@ void MjRobot::sendControl(const mjModel & model,
                           mjData & data,
                           size_t interp_idx,
                           size_t frameskip_,
-                          bool torque_control)
+                          bool torque_control,
+                          bool disturbance)
 {
   for(size_t i = 0; i < mj_ctrl.size(); ++i)
   {
@@ -993,7 +939,7 @@ void MjRobot::sendControl(const mjModel & model,
     {
       if(torque_control && !mj_is_gripper_joint[i])
       {
-        mj_ctrl[i] = torque_ref;
+        mj_ctrl[i] = torque_ref + ((i == 5 and disturbance) ? 5.0 : 0);
       }
       else
       {
@@ -1050,14 +996,14 @@ bool MjSimImpl::controlStep()
       r.updateControl(controller->robots().robot(r.name));
     }
   }
-  if(controller->controller().datastore().has("ControlMode"))
-  {
-    config.torque_control = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
-  }
+
+  auto use_torque = config.torque_control;
+  if (controller->controller().datastore().has("ControlMode")) use_torque = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
+
   // On each control iter
   for(auto & r : robots)
   {
-    r.sendControl(*model, *data, interp_idx, frameskip_, config.torque_control);
+    r.sendControl(*model, *data, interp_idx, frameskip_, use_torque, config.with_disturbance);
   }
   iterCount_++;
   return false;
@@ -1163,7 +1109,7 @@ bool MjSimImpl::stepSimulation()
       std::lock_guard<std::mutex> lock(rendering_mutex_);
       simStep();
     }
-    updateData();
+    updateData(this->config.with_disturbance);
     return controlStep();
   };
   bool done = false;
@@ -1296,8 +1242,8 @@ bool MjSimImpl::render()
       doNStepsButton(50, false);
       doNStepsButton(100, true);
     }
-    auto flag_to_gui = [&](const char * label, mjtVisFlag flag)
-    {
+    ImGui::Checkbox("Disturbance active", &config.with_disturbance);
+    auto flag_to_gui = [&](const char * label, mjtVisFlag flag) {
       bool show = options.flags[flag];
       if(ImGui::Checkbox(label, &show))
       {

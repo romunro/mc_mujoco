@@ -711,25 +711,14 @@ void MjSimImpl::makeDatastoreCalls()
     // make_call to set applied external force to a body of a robot (by name)
     ds.make_call(
         r.name + "::ApplyForcesOnBody",
-        [this, &r](const std::string & bodyname, const sva::ForceVecd & wrench, const Eigen::Vector3d localPoint)
+        [this, &r](const std::string & bodyname, const sva::ForceVecd & wrench, const Eigen::Vector3d localpose)
         {
           auto & robot = controller->robots().robot(r.name);
           if(robot.hasBody(bodyname))
           {
             auto mjr_body_idx = mj_name2id(model, mjOBJ_BODY, (r.prefixed(bodyname)).c_str());
-            if(mjr_body_idx < 0)
-            {
-              mc_rtc::log::warning(
-                  "[mc_mujoco] {}::ApplyForcesOnBody failed. MuJoCo body {} could not be found for robot body {}",
-                  r.name, r.prefixed(bodyname), bodyname);
-              return false;
-            }
-            mc_rtc::log::info(
-                "[mc_mujoco] {}::ApplyForcesOnBody queued body={} mj_body_id={} local_point=[{:.3f}, {:.3f}, {:.3f}] "
-                "force=[{:.3f}, {:.3f}, {:.3f}] moment=[{:.3f}, {:.3f}, {:.3f}]",
-                r.name, bodyname, mjr_body_idx, localPoint.x(), localPoint.y(), localPoint.z(), wrench.force().x(),
-                wrench.force().y(), wrench.force().z(), wrench.couple().x(), wrench.couple().y(), wrench.couple().z());
-            pending_body_forces_.push_back({mjr_body_idx, r.name, bodyname, wrench, localPoint});
+            mj_applyFT(model, data, wrench.force().data(), wrench.couple().data(), localpose.data(), mjr_body_idx,
+                       data->qfrc_applied);
             return true;
           }
           else
@@ -739,23 +728,6 @@ void MjSimImpl::makeDatastoreCalls()
             return false;
           }
         });
-
-    ds.make_call(r.name + "::GetApplyForcesOnBodyAudit",
-                 [this, &r](const std::string & bodyname, Eigen::Vector3d & bodyOrigin, Eigen::Vector3d & bodyCom,
-                            Eigen::Vector3d & worldPoint, sva::ForceVecd & requestedWrench, sva::ForceVecd & xfrcWrench)
-                 {
-                   const auto it = last_applied_body_force_audit_.find(r.name + "::" + bodyname);
-                   if(it == last_applied_body_force_audit_.end() || !it->second.valid)
-                   {
-                     return false;
-                   }
-                   bodyOrigin = it->second.body_origin;
-                   bodyCom = it->second.body_com;
-                   worldPoint = it->second.world_point;
-                   requestedWrench = it->second.requested_wrench;
-                   xfrcWrench = it->second.xfrc_wrench;
-                   return true;
-                 });
   }
 }
 

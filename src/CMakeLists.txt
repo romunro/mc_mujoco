@@ -38,6 +38,7 @@ set(mc_mujoco_lib_SRC
     mj_sim.h
     mj_sim_impl.h
     mj_utils.h
+    mj_friction.cpp
     ${uitools_SRC}
     MujocoClient.cpp
     MujocoClient.h

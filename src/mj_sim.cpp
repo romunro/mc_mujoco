@@ -498,6 +498,19 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   // reset the PD gains to default values
   kp = default_kp;
   kd = default_kd;
+
+  // reset friction values
+  frictionSet.resize(mj_to_mbc.size());
+  for(int i = 0; i < frictionSet.size(); i++)
+  {
+    frictionSet[i].w_ast = 0.0;
+    frictionSet[i].T_ast = 0.0;
+    frictionSet[i].e = 0.0;
+    frictionSet[i].p_prev = 0.0;
+    frictionSet[i].firstTime = true;
+
+    createTable(frictionSet[i]);
+  }
 }
 
 template<typename T>
@@ -875,7 +888,14 @@ void MjRobot::updateControl(const mc_rbdyn::Robot & robot)
     {
       mj_next_ctrl_q[ctrl_idx] = robot.mbc().q[jIndex][0];
       mj_next_ctrl_alpha[ctrl_idx] = robot.mbc().alpha[jIndex][0];
-      mj_next_ctrl_jointTorque[ctrl_idx] = robot.mbc().jointTorque[jIndex][0];
+
+      frictionSet[i].value = mj_next_ctrl_q[ctrl_idx];
+      frictionSet[i].velocity = mj_next_ctrl_alpha[ctrl_idx];
+
+      frictionSet[i].torqueForce = robot.mbc().jointTorque[jIndex][0];
+
+      mj_next_ctrl_jointTorque[ctrl_idx] = setFrictionForces(frictionSet[i]);
+
       ctrl_idx++;
     }
   }

@@ -1,10 +1,12 @@
 #pragma once
 
+#include "mj_friction.h"
 #include "mj_sim.h"
 
 #include "MujocoClient.h"
 
 #include "mujoco.h"
+#include <vector>
 
 #ifdef USE_UI_ADAPTER
 #  include "platform_ui_adapter.h"
@@ -163,6 +165,9 @@ struct MjRobot
   /** Next torque desired by mc_rtc */
   std::vector<double> mj_next_ctrl_jointTorque;
 
+  /** Friction model in joints */
+  std::vector<mc_mujoco::JointValSet> frictionSet;
+
   /** Initialize some data after the simulation has started */
   void initialize(mjModel * model, const mc_rbdyn::Robot & robot);
 
@@ -176,7 +181,12 @@ struct MjRobot
   void updateControl(const mc_rbdyn::Robot & robot);
 
   /** Send control to MuJoCo */
-  void sendControl(const mjModel & model, mjData & data, size_t interp_idx, size_t frameskip_, bool torque_control, bool disturbance);
+  void sendControl(const mjModel & model,
+                   mjData & data,
+                   size_t interp_idx,
+                   size_t frameskip_,
+                   bool torque_control,
+                   bool disturbance);
 
   /** Run PD control for a given joint */
   double PD(size_t jnt_id, double q_ref, double q, double qdot_ref, double qdot);

@@ -43,20 +43,36 @@ struct Trajectory : public MujocoWidget
       }
       else // Otherwise draw the start and end points
       {
+        if(!show_)
+        {
+          return;
+        }
+
         mclient_.draw_frame(points_[0]);
         mclient_.draw_frame(points_.back());
       }
     }
     else
     {
+      if(!show_)
+      {
+        return;
+      }
+
       mclient_.draw_box(points_[0], Eigen::Matrix3d::Identity(), Eigen::Vector3d::Constant(0.04), config_.color);
       mclient_.draw_sphere(points_.back(), 0.04, config_.color);
     }
   }
 
+  void draw2D() override
+  {
+    ImGui::Checkbox(label(fmt::format("Show {}", id.name)).c_str(), &show_);
+  }
+
 private:
   std::vector<T> points_;
   mc_rtc::gui::LineConfig config_;
+  bool show_ = false;
 };
 
 } // namespace mc_mujoco

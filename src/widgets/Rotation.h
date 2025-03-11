@@ -11,9 +11,22 @@ struct Rotation : public TransformBase<ControlAxis::ROTATION>
 
   void draw3D() override
   {
+    if(!show_)
+    {
+      return;
+    }
+
     TransformBase::draw3D();
     mclient_.draw_frame(marker_.pose());
   }
+
+  void draw2D() override
+  {
+    ImGui::Checkbox(label(fmt::format("Show {}", id.name)).c_str(), &show_);
+  }
+
+private:
+  bool show_ = false;
 };
 
 } // namespace mc_mujoco

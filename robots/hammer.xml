@@ -1,0 +1,24 @@
+<mujoco model="hammer">
+    <compiler meshdir="assets" texturedir="assets"/>
+    <asset>
+        <mesh name="hammer_mesh" file="/home/helene/workspace/src/mc_mujoco/robots/assets/hammer.stl" scale="0.01 0.01 0.01"/>
+    </asset>
+
+    <default>
+        <default class="collision">
+            <geom condim="3" group="0" />
+        </default>
+        <default class="visual">
+            <geom condim="3" group="1" conaffinity="0" contype="0" />
+        </default>
+    </default>
+
+    <worldbody>
+        <body name="base_link" pos="0 0 -0.1" euler="1.57 0 0">
+            <freejoint name="hammer_root" />
+            <light mode="fixed" directional="false" diffuse=".8 .8 .8" specular="0.3 0.3 0.3" pos="0 0 -4.0" dir="0 0 1" />
+            <geom class="collision" type="mesh" mesh="hammer_mesh" />
+            <geom class="visual" type="mesh" mesh="hammer_mesh" />
+        </body>
+    </worldbody>
+</mujoco>

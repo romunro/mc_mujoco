@@ -35,11 +35,7 @@ struct Point3D : public TransformBase<ControlAxis::TRANSLATION>
 
 private:
   mc_rtc::gui::PointConfig config_;
-<<<<<<< Updated upstream
-  bool show_ = true;
-=======
   bool show_ = false;
->>>>>>> Stashed changes
 };
 
 } // namespace mc_mujoco

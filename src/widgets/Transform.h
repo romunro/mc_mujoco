@@ -15,7 +15,6 @@ struct TransformWidget : public TransformBase<ControlAxis::ALL>
     {
       return;
     }
-
     TransformBase::draw3D();
     mclient_.draw_frame(marker_.pose());
   }
@@ -26,7 +25,7 @@ struct TransformWidget : public TransformBase<ControlAxis::ALL>
   }
 
 private:
-  bool show_ = true;
+  bool show_ = false;
 };
 
 } // namespace mc_mujoco

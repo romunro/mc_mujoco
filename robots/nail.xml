@@ -1,7 +1,7 @@
 <mujoco model="nail">
     <compiler meshdir="assets" texturedir="assets"/>
     <asset>
-        <mesh name="nail_mesh" file="/home/helene/workspace/src/mc_mujoco/robots/assets/nail.stl"/>
+        <mesh name="nail_mesh" file="nail.stl"/>
     </asset>
 
     <default>

@@ -621,6 +621,7 @@ void MjSimImpl::makeDatastoreCalls()
   for(auto & o : objects)
   {
     ds.make_call(o.name + "::SetPosW", [this, name = o.name](const sva::PTransformd & pt) { setObjectPosW(name, pt); });
+    ds.make_call(o.name + "::GetPosW", [this, name = o.name]() { return getObjectPosW(name); });
   }
   for(auto & r : robots)
   {
@@ -1206,6 +1207,11 @@ bool MjSimImpl::stepSimulation()
 
 void MjSimImpl::updateScene()
 {
+  if(!config.with_visualization)
+  {
+    return;
+  }
+
   // update scene and render
   std::lock_guard<std::mutex> lock(rendering_mutex_);
   mjv_updateScene(model, data, &options, &pert, &camera, mjCAT_ALL, &scene);

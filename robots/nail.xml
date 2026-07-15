@@ -35,7 +35,7 @@
             <config key="sensor_name" value="nail_force_sensor"/>
             <config key="frame_id" value="nail"/>
             <config key="topic_name" value="/nail_force_sensor"/>
-            <config key="publish_rate" value="30"/>
+            <config key="publish_rate" value="2000"/>
         </plugin>
     </sensor>
 

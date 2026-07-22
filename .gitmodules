@@ -4,3 +4,6 @@
 [submodule "ext/mc_rtc-imgui"]
 	path = ext/mc_rtc-imgui
 	url = https://github.com/mc-rtc/mc_rtc-imgui
+[submodule "robots/hrp5p_mj_description"]
+        path = robots/hrp5p_mj_description
+        url = https://github.com/ThibaultDel/hrp5p_mj_description.git

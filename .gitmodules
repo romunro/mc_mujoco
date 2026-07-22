@@ -7,3 +7,6 @@
 [submodule "examples/grasp-fsm"]
 	path = examples/grasp-fsm
 	url = https://github.com/rohanpsingh/grasp-fsm-sample-controller.git
+[submodule "robots/hrp5p_mj_description"]
+        path = robots/hrp5p_mj_description
+        url = https://github.com/ThibaultDel/hrp5p_mj_description.git

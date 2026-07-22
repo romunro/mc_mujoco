@@ -34,6 +34,8 @@ struct MujocoClient : public mc_rtc::imgui::Client
 
   void updateScene(mjvScene & scene);
 
+  bool show_visuals = true;
+
   inline const std::array<float, 16> & view() const noexcept
   {
     return view_;
@@ -138,6 +140,12 @@ protected:
                   const mc_rtc::gui::LineConfig & config) override;
 
   void visual(const ElementId & id, const rbd::parsers::Visual & visual, const sva::PTransformd & pos) override;
+
+  mc_rtc::imgui::InteractiveMarkerPtr make_marker(const sva::PTransformd & pose,
+                                                  mc_rtc::imgui::ControlAxis mask) override
+  {
+    return {};
+  };
 
 private:
   std::array<float, 16> view_;

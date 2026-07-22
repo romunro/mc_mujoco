@@ -10,21 +10,27 @@ First, install the required apt packages:
 $ sudo apt install libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libglew-dev
 ```
 
-Then, assuming that you have mujoco installed under `${HOME}/.mujoco/mujoco235`,
+Then, execute the following command to install mujoco (`$HOME/.mujoco/mujoco301`), and build `mc_mujoco`:
 
 ```sh
 $ git clone --recursive git@github.com:rohanpsingh/mc_mujoco.git
 $ cd mc_mujoco
 $ mkdir build && cd build
-$ cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMUJOCO_ROOT_DIR=$HOME/.mujoco/mujoco235
+$ cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo
 $ make
 $ make install
+```
+
+If mujoco is already installed, you can add the following   option to specify the path :
+
+```sh
+$ cmake .. -DCMAKE_BUILD_TYPE=RelWithDebInfo -DMUJOCO_ROOT_DIR=$HOME/.mujoco/mujoco301
 ```
 
 Add the following line to your `~/.bashrc`:
 
 ```
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/.mujoco/mujoco235/lib:${HOME}/.mujoco/mujoco235/bin
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${HOME}/.mujoco/mujoco301/lib:${HOME}/.mujoco/mujoco301/bin
 ```
 
 Then, to run the interface:
@@ -32,6 +38,31 @@ Then, to run the interface:
 ```sh
 $ mc_mujoco
 ```
+
+## Docker
+
+Assuming [Docker](https://docs.docker.com/engine/install/) (Compose v2) has been installed:
+
+```sh
+$ git clone --recursive git@github.com:rohanpsingh/mc_mujoco.git
+$ cd mc_mujoco/docker
+$ make run
+```
+
+This builds the environment image, compiles mc_mujoco, and drops you into a shell. Then:
+
+```sh
+$ mc_mujoco
+```
+
+See [docker/README.md](docker/README.md) for details on development workflow, using the image for your own mc_rtc controllers, running CI locally, and version management.
+
+## Examples
+
+Example controllers live under [`examples/`](examples/). Not built by default (enable with `-DBUILD_EXAMPLES=ON`). See [`examples/README.md`](examples/README.md) for the convention and how to activate a sample's config inside the container.
+
+- **[neck_policy](examples/neck_policy/)** — Minimal libtorch NN policy that drives JVRC1's neck yaw joint. Good starting point for running NN policies in mc_mujoco.
+- **[grasp-fsm](examples/grasp-fsm/)** *(submodule)* — FSM controller that grasps an object on a table using BaselineWalkingController. Pulled from [grasp-fsm-sample-controller](https://github.com/rohanpsingh/grasp-fsm-sample-controller).
 
 ---
 
@@ -75,10 +106,6 @@ PluginPaths: ["<path-to-plugins>"]
 #### GUI: Mouse Interaction
 
 An object is selected by left-double-click. The user can then apply forces and torques on the selected object by holding `Ctrl` key and dragging the left-mouse-button for torques and right-mouse-button for forces.
-
-## Example
-
-A basic example of what you can do using this package is [here](https://github.com/rohanpsingh/grasp-fsm-sample-controller).
 
 ## Datastore callbacks
 

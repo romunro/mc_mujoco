@@ -13,10 +13,16 @@ project(
   LANGUAGES C CXX
   VERSION 1.0.0)
 
+list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/CMakeModules)
+
+# Read MuJoCo version from single source of truth
+file(STRINGS "${CMAKE_SOURCE_DIR}/MUJOCO_VERSION" MUJOCO_VERSION)
+string(STRIP "${MUJOCO_VERSION}" MUJOCO_VERSION)
+
 if(NOT DEFINED MUJOCO_ROOT_DIR)
   # FetchContent from CMake >= 3.11
   if(${CMAKE_VERSION} VERSION_GREATER_EQUAL "3.11")
-    set(MUJOCO_DOWNLOAD_DIR "$ENV{HOME}/.mujoco/mujoco301")
+    set(MUJOCO_DOWNLOAD_DIR "$ENV{HOME}/.mujoco/mujoco-${MUJOCO_VERSION}")
     message(
       STATUS
         "MUJOCO_ROOT_DIR is not provided. Will be automatically downloaded to ${MUJOCO_DOWNLOAD_DIR}."
@@ -24,7 +30,7 @@ if(NOT DEFINED MUJOCO_ROOT_DIR)
     include(FetchContent)
     FetchContent_Declare(
       mujoco
-      URL https://github.com/google-deepmind/mujoco/releases/download/3.0.1/mujoco-3.0.1-linux-x86_64.tar.gz
+      URL https://github.com/google-deepmind/mujoco/releases/download/${MUJOCO_VERSION}/mujoco-${MUJOCO_VERSION}-linux-x86_64.tar.gz
           SOURCE_DIR
           ${MUJOCO_DOWNLOAD_DIR})
     FetchContent_MakeAvailable(mujoco)
@@ -38,6 +44,7 @@ if(NOT DEFINED MUJOCO_ROOT_DIR)
 endif()
 
 find_package(mc_rtc REQUIRED)
+find_package(CLI11 REQUIRED)
 
 option(USE_GL "Use Mujoco with OpenGL" ON)
 set(MUJOCO_BIN_DIR "${MUJOCO_ROOT_DIR}/bin")
@@ -65,6 +72,9 @@ if(NOT GLFW)
   endif()
   set(BUILD_STATIC
       ON
+      CACHE BOOL "" FORCE)
+  set(BUILD_SHARED_LIBS
+      OFF
       CACHE BOOL "" FORCE)
   add_subdirectory(ext/glfw EXCLUDE_FROM_ALL)
 else()
@@ -98,5 +108,7 @@ add_subdirectory(cmake)
 add_subdirectory(ext/pugixml)
 add_subdirectory(src)
 add_subdirectory(robots)
+
+# add_subdirectory(examples)
 
 enable_testing()

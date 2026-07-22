@@ -1,4 +1,10 @@
 *~
+<<<<<<< HEAD
 build/
 .idea/
 .cache/
+=======
+build
+compile_commands.json
+.cache/
+>>>>>>> sauvegarde-modifs

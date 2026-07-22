@@ -25,7 +25,11 @@ struct TransformWidget : public TransformBase<ControlAxis::ALL>
   }
 
 private:
+<<<<<<< HEAD
   bool show_ = false;
+=======
+  bool show_ = true;
+>>>>>>> sauvegarde-modifs
 };
 
 } // namespace mc_mujoco

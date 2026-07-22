@@ -1,9 +1,11 @@
 #include "mj_sim_impl.h"
 #include "mj_utils.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <type_traits>
+#include <unordered_set>
 
 #include "MujocoClient.h"
 #include "config.h"
@@ -15,14 +17,28 @@
 
 #include "ImGuizmo.h"
 
-#include <boost/filesystem.hpp>
-namespace bfs = boost::filesystem;
+#include <filesystem>
+namespace fs = std::filesystem;
 
 #include <mc_rtc/version.h>
 
 #ifdef USE_UI_ADAPTER
 #  include "our_glfw_adapter.h"
 #endif
+
+// In mj_utils.h
+static inline void updateVector(const std::vector<std::vector<double>> & value, Eigen::VectorXd & vec)
+{
+  Eigen::DenseIndex idx = 0;
+  for(const auto & block : value)
+  {
+    Eigen::DenseIndex size = static_cast<Eigen::DenseIndex>(block.size());
+    if(size == 0) continue;
+    Eigen::Map<const Eigen::VectorXd> qi(block.data(), size);
+    vec.segment(idx, size) = qi;
+    idx += size;
+  }
+}
 
 namespace mc_mujoco
 {
@@ -107,16 +123,16 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
 : controller(std::make_unique<mc_control::MCGlobalController>(config.mc_config)), config(config)
 {
   auto get_robot_cfg_path_local = [&](const std::string & robot_name)
-  { return bfs::path(mc_mujoco::USER_FOLDER) / (robot_name + ".yaml"); };
+  { return fs::path(mc_mujoco::USER_FOLDER) / (robot_name + ".yaml"); };
   auto get_robot_cfg_path_global = [&](const std::string & robot_name)
-  { return bfs::path(mc_mujoco::SHARE_FOLDER) / (robot_name + ".yaml"); };
+  { return fs::path(mc_mujoco::SHARE_FOLDER) / (robot_name + ".yaml"); };
   auto get_robot_cfg_path = [&](const std::string & robot_name) -> std::string
   {
-    if(bfs::exists(get_robot_cfg_path_local(robot_name)))
+    if(fs::exists(get_robot_cfg_path_local(robot_name)))
     {
       return get_robot_cfg_path_local(robot_name).string();
     }
-    if(bfs::exists(get_robot_cfg_path_global(robot_name)))
+    if(fs::exists(get_robot_cfg_path_global(robot_name)))
     {
       return get_robot_cfg_path_global(robot_name).string();
     }
@@ -134,7 +150,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
   auto mc_mujoco_cfg_path = fmt::format("{}/mc_mujoco.yaml", USER_FOLDER);
   auto mc_mujoco_cfg = [&mc_mujoco_cfg_path]() -> mc_rtc::Configuration
   {
-    if(bfs::exists(mc_mujoco_cfg_path))
+    if(fs::exists(mc_mujoco_cfg_path))
     {
       return {mc_mujoco_cfg_path};
     }
@@ -163,7 +179,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
     }
     std::string xmlFile = static_cast<std::string>(object_cfg("xmlModelPath"));
     mjObjects[object.name] = xmlFile;
-    if(!bfs::exists(xmlFile))
+    if(!fs::exists(xmlFile))
     {
       mc_rtc::log::error_and_throw<std::runtime_error>("[mc_mujoco] XML model cannot be found at {} for {}", xmlFile,
                                                        co.first);
@@ -177,17 +193,74 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
     if(!robot_cfg_path.empty())
     {
       auto robot_cfg = mc_rtc::Configuration(robot_cfg_path);
-      if(!robot_cfg.has("xmlModelPath"))
+
+      auto main_robot_params = [&]() -> std::vector<std::string>
+      {
+        auto main_robot_cfg = controller->configuration().config.find("MainRobot");
+        if(!main_robot_cfg)
+        {
+          return {"JVRC1"};
+        }
+        if(main_robot_cfg->isArray())
+        {
+          return main_robot_cfg->operator std::vector<std::string>();
+        }
+        if(main_robot_cfg->isObject())
+        {
+          auto module_cfg = (*main_robot_cfg)("module");
+          if(module_cfg.isArray())
+          {
+            return module_cfg.operator std::vector<std::string>();
+          }
+          return {module_cfg.operator std::string()};
+        }
+        return {main_robot_cfg->operator std::string()};
+      }();
+
+      const auto & main_robot_name = main_robot_params[0];
+      auto setObjectXML = [&](const std::string & xmlFile)
+      {
+        std::string pdGainsPath = "";
+        mcObjects[r.name()] = xmlFile;
+        if(!main_robot_name.empty() && robot_cfg.find(main_robot_name)
+           && robot_cfg(main_robot_name).find("pdGainsPath"))
+        {
+          pdGainsPath = robot_cfg(main_robot_name)("pdGainsPath", std::string(""));
+        }
+        else if(robot_cfg.find(r.name().c_str()) && robot_cfg(r.name().c_str()).find("pdGainsPath")
+                && !robot_cfg(r.name().c_str())("pdGainsPath", std::string("")).empty())
+        {
+          pdGainsPath = robot_cfg(r.name().c_str())("pdGainsPath", std::string(""));
+        }
+        else if(robot_cfg.find("pdGainsPath"))
+        {
+          pdGainsPath = robot_cfg("pdGainsPath", std::string(""));
+        }
+
+        if(!fs::exists(xmlFile))
+        {
+          mc_rtc::log::error_and_throw<std::runtime_error>("[mc_mujoco] XML model cannot be found at {} for {}",
+                                                           xmlFile, r.name());
+        }
+
+        pdGainsFiles[r.name()] = pdGainsPath;
+      };
+
+      if(!robot_cfg.has("xmlModelPath") && (!robot_cfg.has(r.name()) || robot_cfg.has(main_robot_name)))
       {
         mc_rtc::log::error_and_throw<std::runtime_error>("Missing xmlModelPath in {}", robot_cfg_path);
       }
-      std::string xmlFile = static_cast<std::string>(robot_cfg("xmlModelPath"));
-      mcObjects[r.name()] = xmlFile;
-      pdGainsFiles[r.name()] = robot_cfg("pdGainsPath", std::string(""));
-      if(!bfs::exists(xmlFile))
+      else if(robot_cfg.has(main_robot_name))
       {
-        mc_rtc::log::error_and_throw<std::runtime_error>("[mc_mujoco] XML model cannot be found at {} for {}", xmlFile,
-                                                         r.name());
+        setObjectXML(static_cast<std::string>(robot_cfg(main_robot_name)("xmlModelPath")));
+      }
+      else if(robot_cfg.has(r.name()))
+      {
+        setObjectXML(static_cast<std::string>(robot_cfg(r.name())("xmlModelPath")));
+      }
+      else
+      {
+        setObjectXML(static_cast<std::string>(robot_cfg("xmlModelPath")));
       }
     }
   }
@@ -213,7 +286,7 @@ MjSimImpl::MjSimImpl(const MjConfiguration & config)
     {
       continue;
     }
-    if(!bfs::exists(pdGainsFiles[r.name]))
+    if(!fs::exists(pdGainsFiles[r.name]))
     {
       mc_rtc::log::error_and_throw<std::runtime_error>("[mc_mujoco] PD gains file for {} cannot be found at {}", r.name,
                                                        pdGainsFiles[r.name]);
@@ -276,6 +349,10 @@ void MjRobot::initialize(mjModel * model, const mc_rbdyn::Robot & robot)
   fill_actuator_ids(mj_mot_names, mj_mot_ids);
   fill_actuator_ids(mj_pos_act_names, mj_pos_act_ids);
   fill_actuator_ids(mj_vel_act_names, mj_vel_act_ids);
+  if(!mj_general_act_name.empty())
+  {
+    mj_general_act_id = mj_name2id(model, mjOBJ_ACTUATOR, mj_general_act_name.c_str());
+  }
   if(!root_body.empty())
   {
     root_body_id = mj_name2id(model, mjOBJ_BODY, root_body.c_str());
@@ -323,11 +400,25 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
 {
   const auto & mbc = robot.mbc();
   const auto & rjo = robot.module().ref_joint_order();
-  if(rjo.size() != mj_jnt_names.size())
+  std::unordered_set<std::string> gripper_active_joints;
+  for(const auto & g : robot.grippers())
+  {
+    for(const auto & joint : g.get().activeJoints())
+    {
+      gripper_active_joints.insert(joint);
+    }
+  }
+  if(mj_jnt_names.size() > rjo.size())
   {
     mc_rtc::log::error_and_throw<std::runtime_error>(
         "[mc_mujoco] Missmatch in model for {}, reference joint order has {} joints but MuJoCo models has {} joints",
         name, rjo.size(), mj_jnt_names.size());
+  }
+  if(rjo.size() != mj_jnt_names.size())
+  {
+    mc_rtc::log::info("[mc_mujoco] {} uses {} controller joints for {} MuJoCo joints; unmatched MuJoCo joints will "
+                      "be treated as internal/passive joints",
+                      name, rjo.size(), mj_jnt_names.size());
   }
   mj_to_mbc.resize(0);
   mj_prev_ctrl_q.resize(0);
@@ -335,9 +426,12 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   mj_prev_ctrl_jointTorque.resize(0);
   mj_jnt_to_rjo.resize(0);
   mj_to_mbc.resize(0);
+  mj_is_gripper_joint.resize(0);
+  mj_general_act_ctrl_idx = -1;
   encoders = std::vector<double>(rjo.size(), 0.0);
   alphas = std::vector<double>(rjo.size(), 0.0);
   torques = std::vector<double>(rjo.size(), 0.0);
+  tau_ext = Eigen::VectorXd::Zero(robot.mb().nrDof());
   for(const auto & mj_jn : mj_jnt_names)
   {
     const auto & jn = [&]()
@@ -359,6 +453,7 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
     {
       auto jIndex = robot.jointIndexByName(jn);
       mj_to_mbc.push_back(jIndex);
+      mj_is_gripper_joint.push_back(gripper_active_joints.count(jn) != 0);
       if(robot.mb().joint(jIndex).dof() != 1)
       {
         mc_rtc::log::error_and_throw<std::runtime_error>(
@@ -377,6 +472,22 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
     else
     {
       mj_to_mbc.push_back(-1);
+      mj_is_gripper_joint.push_back(false);
+      mc_rtc::log::warning("[mc_mujoco] No matching joint in controller for MuJoCo joint {} in {}", mj_jn, name);
+    }
+  }
+  if(mj_general_act_id != -1 && gripper_active_joints.size() == 1)
+  {
+    const auto prefixed_joint = prefixed(*gripper_active_joints.begin());
+    auto it = std::find(mj_jnt_names.begin(), mj_jnt_names.end(), prefixed_joint);
+    if(it != mj_jnt_names.end())
+    {
+      mj_general_act_ctrl_idx = static_cast<int>(std::distance(mj_jnt_names.begin(), it));
+    }
+    else
+    {
+      mc_rtc::log::warning("[mc_mujoco] Could not map gripper joint {} to a MuJoCo command source in {}",
+                           *gripper_active_joints.begin(), name);
     }
   }
   mj_ctrl = std::vector<double>(mj_prev_ctrl_q.size(), 0.0);
@@ -523,6 +634,7 @@ void MjSimImpl::makeDatastoreCalls()
   for(auto & o : objects)
   {
     ds.make_call(o.name + "::SetPosW", [this, name = o.name](const sva::PTransformd & pt) { setObjectPosW(name, pt); });
+    ds.make_call(o.name + "::GetPosW", [this, name = o.name]() { return getObjectPosW(name); });
   }
   for(auto & r : robots)
   {
@@ -612,14 +724,25 @@ void MjSimImpl::makeDatastoreCalls()
     // make_call to set applied external force to a body of a robot (by name)
     ds.make_call(
         r.name + "::ApplyForcesOnBody",
-        [this, &r](const std::string & bodyname, const sva::ForceVecd & wrench, const Eigen::Vector3d localpose)
+        [this, &r](const std::string & bodyname, const sva::ForceVecd & wrench, const Eigen::Vector3d localPoint)
         {
           auto & robot = controller->robots().robot(r.name);
           if(robot.hasBody(bodyname))
           {
             auto mjr_body_idx = mj_name2id(model, mjOBJ_BODY, (r.prefixed(bodyname)).c_str());
-            mj_applyFT(model, data, wrench.force().data(), wrench.couple().data(), localpose.data(), mjr_body_idx,
-                       data->qfrc_applied);
+            if(mjr_body_idx < 0)
+            {
+              mc_rtc::log::warning(
+                  "[mc_mujoco] {}::ApplyForcesOnBody failed. MuJoCo body {} could not be found for robot body {}",
+                  r.name, r.prefixed(bodyname), bodyname);
+              return false;
+            }
+            mc_rtc::log::info(
+                "[mc_mujoco] {}::ApplyForcesOnBody queued body={} mj_body_id={} local_point=[{:.3f}, {:.3f}, {:.3f}] "
+                "force=[{:.3f}, {:.3f}, {:.3f}] moment=[{:.3f}, {:.3f}, {:.3f}]",
+                r.name, bodyname, mjr_body_idx, localPoint.x(), localPoint.y(), localPoint.z(), wrench.force().x(),
+                wrench.force().y(), wrench.force().z(), wrench.couple().x(), wrench.couple().y(), wrench.couple().z());
+            pending_body_forces_.push_back({mjr_body_idx, r.name, bodyname, wrench, localPoint});
             return true;
           }
           else
@@ -629,6 +752,23 @@ void MjSimImpl::makeDatastoreCalls()
             return false;
           }
         });
+
+    ds.make_call(r.name + "::GetApplyForcesOnBodyAudit",
+                 [this, &r](const std::string & bodyname, Eigen::Vector3d & bodyOrigin, Eigen::Vector3d & bodyCom,
+                            Eigen::Vector3d & worldPoint, sva::ForceVecd & requestedWrench, sva::ForceVecd & xfrcWrench)
+                 {
+                   const auto it = last_applied_body_force_audit_.find(r.name + "::" + bodyname);
+                   if(it == last_applied_body_force_audit_.end() || !it->second.valid)
+                   {
+                     return false;
+                   }
+                   bodyOrigin = it->second.body_origin;
+                   bodyCom = it->second.body_com;
+                   worldPoint = it->second.world_point;
+                   requestedWrench = it->second.requested_wrench;
+                   xfrcWrench = it->second.xfrc_wrench;
+                   return true;
+                 });
   }
 }
 
@@ -653,6 +793,8 @@ void MjSimImpl::startSimulation()
   {
     r.initialize(model, controller->robot(r.name));
     controller->setEncoderValues(r.name, r.encoders);
+    controller->setEncoderVelocities(r.name, r.alphas);
+    controller->setJointTorques(r.name, r.torques);
   }
   for(const auto & r : robots)
   {
@@ -666,18 +808,55 @@ void MjSimImpl::startSimulation()
 
 void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model, mjData * data, bool disturbance)
 {
+  // for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
+  // {
+  //   if(mj_jnt_to_rjo[i] == -1)
+  //   {
+  //     continue;
+  //   }
+  //   encoders[mj_jnt_to_rjo[i]] = data->qpos[model->jnt_qposadr[mj_jnt_ids[i]]];
+  //   alphas[mj_jnt_to_rjo[i]] = data->qvel[model->jnt_dofadr[mj_jnt_ids[i]]];
+  // }
+
   for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
   {
     if(mj_jnt_to_rjo[i] == -1)
     {
       continue;
     }
+    // For mimic joints (no motor, driven by MuJoCo equality constraints),
+    // do NOT feed back the MuJoCo-driven position. Instead keep the value
+    // consistent with what the controller commanded, so the QP state in
+    // runClosedLoop() is never corrupted by equality-constraint-driven motion
+    // that mc-rtc does not model.
+    if(mj_mot_ids[i] == -1 && mj_pos_act_ids[i] == -1 && mj_vel_act_ids[i] == -1)
+    {
+      // This joint has no actuator in MuJoCo — it is driven by an equality
+      // constraint. Leave its encoder slot at the last commanded value so
+      // the observer does not inject an inconsistent state into the QP.
+      continue;
+    }
     encoders[mj_jnt_to_rjo[i]] = data->qpos[model->jnt_qposadr[mj_jnt_ids[i]]];
     alphas[mj_jnt_to_rjo[i]] = data->qvel[model->jnt_dofadr[mj_jnt_ids[i]]];
   }
+
+  // for(size_t i = 0; i < mj_mot_ids.size(); ++i)
+  // {
+  //   if(mj_jnt_to_rjo[i] == -1)
+  //   {
+  //     continue;
+  //   }
+  //   torques[mj_jnt_to_rjo[i]] = data->qfrc_actuator[model->jnt_dofadr[mj_jnt_ids[i]]];
+  // }
+
   for(size_t i = 0; i < mj_mot_ids.size(); ++i)
   {
     if(mj_jnt_to_rjo[i] == -1)
+    {
+      continue;
+    }
+    // Skip joints with no motor — they have no meaningful actuator torque
+    if(mj_mot_ids[i] == -1)
     {
       continue;
     }
@@ -709,8 +888,7 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
       gc->setSensorLinearVelocities(name, {{"FloatingBase", root_linvel}});
       gc->setSensorAngularVelocities(name, {{"FloatingBase", root_angvel}});
       gc->setSensorLinearAccelerations(name, {{"FloatingBase", root_linacc}});
-      // FIXME Not implemented in mc_rtc
-      // gc->setSensorAngularAccelerations(name, {{"FloatingBase", root_angacc}});
+      gc->setSensorAngularAccelerations(name, {{"FloatingBase", root_angacc}});
     }
   }
 
@@ -743,7 +921,52 @@ void MjRobot::updateSensors(mc_control::MCGlobalController * gc, mjModel * model
   if(name.compare("kinova") == 0 and disturbance) fakeTorques[5] = fakeTorques[5] - 5.0;
   gc->setEncoderValues(name, encoders);
   gc->setEncoderVelocities(name, alphas);
-  gc->setJointTorques(name, fakeTorques);
+  gc->setJointTorques(name, torques);
+  if(is_external_torques_enabled_changed != use_external_torques)
+  {
+    // Ensure mc-rtc sees zero external torques when disabled
+    tau_ext.setZero();
+    robot.setExternalTorques(tau_ext);
+    is_external_torques_enabled_changed = use_external_torques;
+  }
+  if(use_external_torques)
+  {
+    const auto & mb = robot.mb();
+    std::vector<std::vector<double>> tau_ext_mbc(mb.nrJoints());
+    for(int j = 0; j < mb.nrJoints(); ++j)
+    {
+      tau_ext_mbc[j].assign(mb.joint(j).dof(), 0.0);
+    }
+
+    // Floating base: MuJoCo free joint DoF layout is [vx, vy, vz, wx, wy, wz] (linear then angular)
+    // RBDyn Free joint DoF layout is [wx, wy, wz, vx, vy, vz] (angular then linear)
+    // Both are in world frame so only a reordering is needed, no rotation
+    if(root_qvel_idx != -1 && root_joint_type == mjJNT_FREE && mb.joint(0).dof() == 6)
+    {
+      // MuJoCo indices: linear=[0,1,2], angular=[3,4,5]
+      // RBDyn indices:  angular=[0,1,2], linear=[3,4,5]
+      tau_ext_mbc[0][0] = data->qfrc_constraint[root_qvel_idx + 3]; // wx
+      tau_ext_mbc[0][1] = data->qfrc_constraint[root_qvel_idx + 4]; // wy
+      tau_ext_mbc[0][2] = data->qfrc_constraint[root_qvel_idx + 5]; // wz
+      tau_ext_mbc[0][3] = data->qfrc_constraint[root_qvel_idx + 0]; // vx
+      tau_ext_mbc[0][4] = data->qfrc_constraint[root_qvel_idx + 1]; // vy
+      tau_ext_mbc[0][5] = data->qfrc_constraint[root_qvel_idx + 2]; // vz
+    }
+
+    // 1-DoF actuated joints
+    for(size_t i = 0; i < mj_jnt_ids.size(); ++i)
+    {
+      int jIndex = mj_to_mbc[i];
+      if(jIndex == -1) continue;
+      if(mb.joint(jIndex).dof() != 1) continue;
+      int dof_addr = model->jnt_dofadr[mj_jnt_ids[i]];
+      tau_ext_mbc[jIndex][0] = data->qfrc_constraint[dof_addr];
+    }
+
+    tau_ext.setZero();
+    updateVector(tau_ext_mbc, tau_ext);
+    robot.setExternalTorques(tau_ext);
+  }
 }
 
 void MjSimImpl::updateData(bool disturbance)
@@ -809,7 +1032,7 @@ void MjRobot::sendControl(const mjModel & model,
     torque_ref += mj_prev_ctrl_jointTorque[i];
     if(mot_id != -1)
     {
-      if(torque_control)
+      if(torque_control && !mj_is_gripper_joint[i])
       {
         mj_ctrl[i] = torque_ref + ((i == 5 and disturbance) ? 5.0 : 0);
       }
@@ -834,6 +1057,26 @@ void MjRobot::sendControl(const mjModel & model,
       data.ctrl[vel_act_id] = alpha_ref;
     }
   }
+  if(mj_general_act_id != -1 && mj_general_act_ctrl_idx != -1)
+  {
+    const auto i = static_cast<size_t>(mj_general_act_ctrl_idx);
+    double q_ref = (interp_idx + 1) * (mj_next_ctrl_q[i] - mj_prev_ctrl_q[i]) / frameskip_;
+    q_ref += mj_prev_ctrl_q[i];
+
+    const auto joint_id = mj_jnt_ids[i];
+    const double joint_low = model.jnt_range[2 * joint_id];
+    const double joint_high = model.jnt_range[2 * joint_id + 1];
+    const double ctrl_low = model.actuator_ctrlrange[2 * mj_general_act_id];
+    const double ctrl_high = model.actuator_ctrlrange[2 * mj_general_act_id + 1];
+
+    double ctrl = ctrl_low;
+    if(joint_high > joint_low)
+    {
+      const double ratio = (q_ref - joint_low) / (joint_high - joint_low);
+      ctrl = ctrl_low + ratio * (ctrl_high - ctrl_low);
+    }
+    data.ctrl[mj_general_act_id] = std::clamp(ctrl, ctrl_low, ctrl_high);
+  }
 }
 
 bool MjSimImpl::controlStep()
@@ -842,6 +1085,7 @@ bool MjSimImpl::controlStep()
   // After every frameskip iters
   if(config.with_controller && interp_idx == 0)
   {
+    pending_body_forces_.clear();
     // run the controller
     if(!controller->run())
     {
@@ -852,11 +1096,10 @@ bool MjSimImpl::controlStep()
       r.updateControl(controller->robots().robot(r.name));
     }
   }
-
-  auto use_torque = config.torque_control;
   if(controller->controller().datastore().has("ControlMode"))
-    use_torque = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
-
+  {
+    config.torque_control = controller->controller().datastore().get<std::string>("ControlMode").compare("Torque") == 0;
+  }
   // On each control iter
   for(auto & r : robots)
   {
@@ -872,6 +1115,34 @@ void MjSimImpl::simStep()
   mju_zero(data->xfrc_applied, 6 * model->nbody);
   mjv_applyPerturbPose(model, data, &pert, 0); // move mocap bodies only
   mjv_applyPerturbForce(model, data, &pert);
+
+  for(const auto & pending : pending_body_forces_)
+  {
+    Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> bodyRotation(data->xmat + 9 * pending.body_id);
+    Eigen::Map<Eigen::Vector3d> bodyOrigin(data->xpos + 3 * pending.body_id);
+    Eigen::Map<Eigen::Vector3d> bodyCom(data->xipos + 3 * pending.body_id);
+    Eigen::Map<Eigen::Matrix<double, 6, 1>> bodyWrench(data->xfrc_applied + 6 * pending.body_id);
+
+    Eigen::Vector3d worldPoint = bodyOrigin + bodyRotation * pending.localPoint;
+    Eigen::Vector3d totalTorque = pending.wrench.couple() + (worldPoint - bodyCom).cross(pending.wrench.force());
+    bodyWrench.head<3>() += pending.wrench.force();
+    bodyWrench.tail<3>() += totalTorque;
+    mc_rtc::log::info("[mc_mujoco] ApplyForcesOnBody injected mj_body_id={} world_point=[{:.3f}, {:.3f}, {:.3f}] "
+                      "xfrc(force,torque)=[{:.3f}, {:.3f}, {:.3f}; {:.3f}, {:.3f}, {:.3f}]",
+                      pending.body_id, worldPoint.x(), worldPoint.y(), worldPoint.z(), bodyWrench[0], bodyWrench[1],
+                      bodyWrench[2], bodyWrench[3], bodyWrench[4], bodyWrench[5]);
+
+    LastAppliedBodyForceAudit audit;
+    audit.valid = true;
+    audit.body_id = pending.body_id;
+    audit.body_name = pending.body_name;
+    audit.body_origin = bodyOrigin;
+    audit.body_com = bodyCom;
+    audit.world_point = worldPoint;
+    audit.requested_wrench = pending.wrench;
+    audit.xfrc_wrench = sva::ForceVecd(bodyWrench.tail<3>(), bodyWrench.head<3>());
+    last_applied_body_force_audit_[pending.robot_name + "::" + pending.body_name] = audit;
+  }
 
   // take one step in simulation
   // model.opt.timestep will be used here
@@ -965,6 +1236,11 @@ bool MjSimImpl::stepSimulation()
 
 void MjSimImpl::updateScene()
 {
+  if(!config.with_visualization)
+  {
+    return;
+  }
+
   // update scene and render
   std::lock_guard<std::mutex> lock(rendering_mutex_);
   mjv_updateScene(model, data, &options, &pert, &camera, mjCAT_ALL, &scene);
@@ -1079,6 +1355,10 @@ bool MjSimImpl::render()
     flag_to_gui("Show contact forces [F]", mjVIS_CONTACTFORCE);
     flag_to_gui("Make Transparent [T]", mjVIS_TRANSPARENT);
     flag_to_gui("Convex Hull rendering [V]", mjVIS_CONVEXHULL);
+    if(client)
+    {
+      ImGui::Checkbox("Show mc_rtc visuals", &client->show_visuals);
+    }
     auto group_to_checkbox = [&](size_t group, bool last)
     {
       bool show = options.geomgroup[group];
@@ -1116,6 +1396,20 @@ bool MjSimImpl::render()
         }
       }
     }
+    if(!robots.empty())
+    {
+      ImGui::Separator();
+      ImGui::Text("External torques");
+      for(auto & r : robots)
+      {
+        ImGui::Checkbox(fmt::format("Enable for {}", r.name).c_str(), &r.use_external_torques);
+        if(r.use_external_torques)
+        {
+          ImGui::SameLine();
+          ImGui::Text("||tau_ext|| = %.4f", r.tau_ext.norm());
+        }
+      }
+    }
     ImGui::End();
   }
   ImGui::Render();
@@ -1139,10 +1433,10 @@ void MjSimImpl::stopSimulation() {}
 
 void MjSimImpl::saveGUISettings()
 {
-  auto user_path = bfs::path(USER_FOLDER);
-  if(!bfs::exists(user_path))
+  auto user_path = fs::path(USER_FOLDER);
+  if(!fs::exists(user_path))
   {
-    if(!bfs::create_directories(user_path))
+    if(!fs::create_directories(user_path))
     {
       mc_rtc::log::critical("Failed to create the user directory: {}. GUI configuration will not be saved",
                             user_path.string());
@@ -1153,7 +1447,7 @@ void MjSimImpl::saveGUISettings()
   auto config_path = fmt::format("{}/mc_mujoco.yaml", USER_FOLDER);
   auto config = [&]() -> mc_rtc::Configuration
   {
-    if(bfs::exists(config_path))
+    if(fs::exists(config_path))
     {
       return {config_path};
     }

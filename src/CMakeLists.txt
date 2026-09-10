@@ -149,6 +149,9 @@ endif()
 
 add_executable(mc_mujoco main.cpp)
 target_compile_definitions(mc_mujoco PUBLIC MUJOCO_BIN_DIR="${MUJOCO_BIN_DIR}")
+if(UNIX)
+  target_link_libraries(mc_mujoco PRIVATE -Wl,--no-as-needed ${TINYXML2_LIB} -Wl,--as-needed)
+endif()
 target_link_libraries(mc_mujoco PRIVATE mc_mujoco_lib CLI11::CLI11)
 
 install(

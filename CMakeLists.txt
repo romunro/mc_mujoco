@@ -45,6 +45,7 @@ endif()
 
 find_package(mc_rtc REQUIRED)
 find_package(CLI11 REQUIRED)
+find_library(TINYXML2_LIBRARY NAMES tinyxml2 REQUIRED)
 
 option(USE_GL "Use Mujoco with OpenGL" ON)
 set(MUJOCO_BIN_DIR "${MUJOCO_ROOT_DIR}/bin")

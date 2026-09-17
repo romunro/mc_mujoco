@@ -6,6 +6,7 @@
 #include <cmath>
 #include <iostream>
 #include <thread>
+#include <csignal>
 
 // Replaced boost/program_options.hpp with CLI11
 #include <CLI/CLI.hpp>
@@ -43,6 +44,12 @@ void simulate(mc_mujoco::MjSim & mj_sim)
   {
     mj_sim.stepSimulation();
   }
+}
+
+// Handler to trigger clean shutdown
+void sigint_handler(int)
+{
+  render_state = false;
 }
 
 int main(int argc, char * argv[])

@@ -894,8 +894,8 @@ void MjRobot::updateControl(const mc_rbdyn::Robot & robot)
 
       frictionSet[i].torqueForce = robot.mbc().jointTorque[jIndex][0];
 
-      mj_next_ctrl_jointTorque[ctrl_idx] = setFrictionForces(frictionSet[i]);
-      // mj_next_ctrl_jointTorque[ctrl_idx] = robot.mbc().jointTorque[jIndex][0];
+      // mj_next_ctrl_jointTorque[ctrl_idx] = setFrictionForces(frictionSet[i]);
+      mj_next_ctrl_jointTorque[ctrl_idx] = robot.mbc().jointTorque[jIndex][0];
 
       ctrl_idx++;
     }

@@ -91,6 +91,8 @@ struct MjRobot
   std::vector<double> alphas;
   /** Joints' torque in robot.ref_joint_order */
   std::vector<double> torques;
+  /** Friction torques added by simulation in robot.ref_joint_order */
+  std::vector<double> friction_torques;
   /** Whether to feed external torques (qfrc_constraint) back to mc-rtc */
   bool use_external_torques = false;
   bool is_external_torques_enabled_changed = false;

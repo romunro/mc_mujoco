@@ -431,6 +431,7 @@ void MjRobot::reset(const mc_rbdyn::Robot & robot)
   encoders = std::vector<double>(rjo.size(), 0.0);
   alphas = std::vector<double>(rjo.size(), 0.0);
   torques = std::vector<double>(rjo.size(), 0.0);
+  friction_torques = std::vector<double>(rjo.size(), 0.0);
   tau_ext = Eigen::VectorXd::Zero(robot.mb().nrDof());
   for(const auto & mj_jn : mj_jnt_names)
   {
@@ -639,6 +640,8 @@ void MjSimImpl::makeDatastoreCalls()
   for(auto & r : robots)
   {
     ds.make_call(r.name + "::SetPosW", [this, name = r.name](const sva::PTransformd & pt) { setRobotPosW(name, pt); });
+    ds.make_call(r.name + "::GetSimFrictionTorques",
+                 [&r]() -> const std::vector<double> & { return r.friction_torques; });
     // make_call for setting pd gains (for all joints)
     ds.make_call(r.name + "::SetPDGains",
                  [this, &r](const std::vector<double> & p_vec, const std::vector<double> & d_vec)
@@ -888,15 +891,7 @@ void MjRobot::updateControl(const mc_rbdyn::Robot & robot)
     {
       mj_next_ctrl_q[ctrl_idx] = robot.mbc().q[jIndex][0];
       mj_next_ctrl_alpha[ctrl_idx] = robot.mbc().alpha[jIndex][0];
-
-      frictionSet[i].value = mj_next_ctrl_q[ctrl_idx];
-      frictionSet[i].velocity = mj_next_ctrl_alpha[ctrl_idx];
-
-      frictionSet[i].torqueForce = robot.mbc().jointTorque[jIndex][0];
-
-      // mj_next_ctrl_jointTorque[ctrl_idx] = setFrictionForces(frictionSet[i]);
       mj_next_ctrl_jointTorque[ctrl_idx] = robot.mbc().jointTorque[jIndex][0];
-
       ctrl_idx++;
     }
   }
@@ -932,7 +927,17 @@ void MjRobot::sendControl(const mjModel & model,
     {
       if(torque_control)
       {
-        mj_ctrl[i] = torque_ref + ((i == 5 and disturbance) ? 5.0 : 0);
+        frictionSet[i].torqueForce = torque_ref;
+        frictionSet[i].value = encoders[rjo_id];
+        frictionSet[i].velocity = alphas[rjo_id];
+
+        double orig_tau = torque_ref;
+        double net_tau = setFrictionForces(frictionSet[i]);
+        if(rjo_id < static_cast<int>(friction_torques.size()))
+        {
+          friction_torques[rjo_id] = orig_tau - net_tau;
+        }
+        mj_ctrl[i] = net_tau + ((i == 5 and disturbance) ? 5.0 : 0);
       }
       else
       {
@@ -940,7 +945,12 @@ void MjRobot::sendControl(const mjModel & model,
         frictionSet[i].velocity = alpha_ref;
         frictionSet[i].value = q_ref;
 
+        double orig_tau = frictionSet[i].torqueForce;
         mj_ctrl[i] = setFrictionForces(frictionSet[i]);
+        if(rjo_id < static_cast<int>(friction_torques.size()))
+        {
+          friction_torques[rjo_id] = orig_tau - mj_ctrl[i];
+        }
         // mj_ctrl[i] = PD(rjo_id, q_ref, encoders[rjo_id], alpha_ref, alphas[rjo_id]);
       }
       double ratio = model.actuator_gear[6 * mot_id];

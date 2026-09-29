@@ -54,6 +54,9 @@ void sigint_handler(int)
 
 int main(int argc, char * argv[])
 {
+  std::signal(SIGINT, sigint_handler);
+  std::signal(SIGTERM, sigint_handler);
+
   if(mc_rtc::MC_RTC_VERSION != mc_rtc::version())
   {
     mc_rtc::log::error("mc_mujoco was compiled with {} but mc_rtc is at version {}, you might "

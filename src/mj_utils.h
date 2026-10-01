@@ -31,7 +31,8 @@ namespace mc_mujoco
 std::string merge_mujoco_models(const std::map<std::string, std::string> & mujocoObjects,
                                 const std::map<std::string, std::string> & mcrtcObjects,
                                 std::vector<MjObject> & mjObjects,
-                                std::vector<MjRobot> & mjRobots);
+                                std::vector<MjRobot> & mjRobots,
+                                const mc_rbdyn::Robots * mcRobots = nullptr);
 
 /*! Load XML model and initialize */
 bool mujoco_init(MjSimImpl * mj_sim,

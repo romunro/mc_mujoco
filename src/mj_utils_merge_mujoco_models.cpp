@@ -7,6 +7,8 @@ namespace fs = std::filesystem;
 #include <mc_rtc/logging.h>
 
 #include "mj_sim_impl.h"
+#include <mc_rbdyn/RobotLoader.h>
+#include <mc_rbdyn/Robots.h>
 
 namespace mc_mujoco
 {
@@ -589,10 +591,96 @@ static MjRobot mj_robot_from_xml(const std::string & name, const std::string & x
   return out;
 }
 
+
+static void sync_robot_bodies_from_mc_rtc(pugi::xml_node & body_node,
+                                          const mc_rbdyn::Robot & robot,
+                                          const std::string & prefix)
+{
+  const auto & mb = robot.mb();
+  std::string full_name = body_node.attribute("name").value();
+  std::string body_name = full_name;
+  if(!prefix.empty() && full_name.rfind(prefix + "_", 0) == 0)
+  {
+    body_name = full_name.substr(prefix.size() + 1);
+  }
+
+  if(robot.hasBody(body_name))
+  {
+    int b_idx = mb.bodyIndexByName(body_name);
+    const auto & j = mb.joint(b_idx);
+    if(j.type() == rbd::Joint::Fixed)
+    {
+      int p_idx = mb.parent(b_idx);
+      std::string mb_parent_name = p_idx >= 0 ? mb.body(p_idx).name() : "";
+      pugi::xml_node parent_node = body_node.parent();
+      bool parent_matches = false;
+      if(parent_node && strcmp(parent_node.name(), "body") == 0)
+      {
+        std::string parent_xml_name = parent_node.attribute("name").value();
+        if(!prefix.empty() && parent_xml_name.rfind(prefix + "_", 0) == 0)
+        {
+          parent_xml_name = parent_xml_name.substr(prefix.size() + 1);
+        }
+        parent_matches = (strcasecmp(parent_xml_name.c_str(), mb_parent_name.c_str()) == 0);
+      }
+
+      if(parent_matches)
+      {
+        const sva::PTransformd & X_p_b = mb.transform(b_idx);
+        const Eigen::Vector3d & trans = X_p_b.translation();
+        Eigen::Quaterniond q(X_p_b.rotation().transpose());
+        
+        auto set_attr = [](pugi::xml_node & n, const char * attr_name, const std::string & val)
+        {
+          auto attr = n.attribute(attr_name);
+          if(!attr)
+          {
+            attr = n.append_attribute(attr_name);
+          }
+          attr.set_value(val.c_str());
+        };
+        
+        set_attr(body_node, "pos", fmt::format("{} {} {}", trans.x(), trans.y(), trans.z()));
+        body_node.remove_attribute("euler");
+        set_attr(body_node, "quat", fmt::format("{} {} {} {}", q.w(), q.x(), q.y(), q.z()));
+        
+        const auto & b = mb.body(b_idx);
+        double mass = b.inertia().mass();
+        if(mass > 0)
+        {
+          auto inertial_node = body_node.child("inertial");
+          if(!inertial_node)
+          {
+            inertial_node = body_node.prepend_child("inertial");
+          }
+          inertial_node.remove_attribute("diaginertia");
+          inertial_node.remove_attribute("quat");
+          set_attr(inertial_node, "mass", fmt::format("{}", mass));
+
+          Eigen::Vector3d com = b.inertia().momentum() / mass;
+          set_attr(inertial_node, "pos", fmt::format("{} {} {}", com.x(), com.y(), com.z()));
+
+          sva::PTransformd X_com(com);
+          auto I_com = X_com.dualMul(b.inertia());
+          const auto & I_mat = I_com.inertia();
+          set_attr(inertial_node, "fullinertia", fmt::format("{} {} {} {} {} {}", I_mat(0, 0), I_mat(1, 1), I_mat(2, 2), I_mat(0, 1), I_mat(0, 2), I_mat(1, 2)));
+        }
+      }
+    }
+  }
+
+  for(auto child_body : body_node.children("body"))
+  {
+    sync_robot_bodies_from_mc_rtc(child_body, robot, prefix);
+  }
+}
+
 std::string merge_mujoco_models(const std::map<std::string, std::string> & mujocoObjects,
+
                                 const std::map<std::string, std::string> & mcrtcObjects,
                                 std::vector<MjObject> & mjObjects,
-                                std::vector<MjRobot> & mjRobots)
+                                std::vector<MjRobot> & mjRobots,
+                                const mc_rbdyn::Robots * mcRobots)
 {
   mjRobots.clear();
   std::string outFile = mc_rtc::temp_directory_path(mc_rtc::unique_path("mc_mujoco_%%%%-%%%%-%%%%-%%%%.xml"));
@@ -615,6 +703,20 @@ std::string merge_mujoco_models(const std::map<std::string, std::string> & mujoc
   for(const auto & [name, xmlFile] : mcrtcObjects)
   {
     merge_mujoco_model(name, xmlFile, out);
+    if(mcrtcObjects.count(name))
+    {
+      auto rm = mc_rbdyn::RobotLoader::get_robot_module(mcrtcObjects.at(name));
+      auto robots = mc_rbdyn::loadRobot(*rm);
+      const auto & robot = robots->robot();
+      auto worldbody = out.child("worldbody");
+      if(worldbody)
+      {
+        for(auto child_body : worldbody.children("body"))
+        {
+          sync_robot_bodies_from_mc_rtc(child_body, robot, name);
+        }
+      }
+    }
     mjRobots.push_back(mj_robot_from_xml(name, xmlFile, name));
   }
   {

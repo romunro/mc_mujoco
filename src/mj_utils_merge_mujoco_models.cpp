@@ -680,7 +680,7 @@ std::string merge_mujoco_models(const std::map<std::string, std::string> & mujoc
                                 const std::map<std::string, std::string> & mcrtcObjects,
                                 std::vector<MjObject> & mjObjects,
                                 std::vector<MjRobot> & mjRobots,
-                                const mc_rbdyn::Robots * mcRobots)
+                                const mc_control::MCGlobalController * gc)
 {
   mjRobots.clear();
   std::string outFile = mc_rtc::temp_directory_path(mc_rtc::unique_path("mc_mujoco_%%%%-%%%%-%%%%-%%%%.xml"));
@@ -703,18 +703,71 @@ std::string merge_mujoco_models(const std::map<std::string, std::string> & mujoc
   for(const auto & [name, xmlFile] : mcrtcObjects)
   {
     merge_mujoco_model(name, xmlFile, out);
-    if(mcrtcObjects.count(name))
+    if(gc && gc->controller().robots().hasRobot(name))
     {
-      auto rm = mc_rbdyn::RobotLoader::get_robot_module(mcrtcObjects.at(name));
-      auto robots = mc_rbdyn::loadRobot(*rm);
-      const auto & robot = robots->robot();
-      auto worldbody = out.child("worldbody");
-      if(worldbody)
-      {
-        for(auto child_body : worldbody.children("body"))
-        {
-          sync_robot_bodies_from_mc_rtc(child_body, robot, name);
-        }
+      std::vector<std::string> module_args;
+      const auto & config = gc->controller().config();
+      
+      auto main_robot_name = gc->controller().robot().name();
+      if (name == main_robot_name) {
+          auto main_cfg = gc->controller().config().find("MainRobot");
+          if (!main_cfg) {
+              main_cfg = gc->configuration().config.find("MainRobot");
+          }
+          if (main_cfg) {
+              if (main_cfg->isArray()) module_args = main_cfg->operator std::vector<std::string>();
+              else if (main_cfg->isObject() && main_cfg->has("module")) {
+                  auto mod = (*main_cfg)("module");
+                  if (mod.isArray()) module_args = mod.operator std::vector<std::string>();
+                  else {
+                      module_args.clear();
+                      module_args.push_back(static_cast<std::string>(mod));
+                  }
+              }
+              else {
+                  module_args.clear();
+                  module_args.push_back(static_cast<std::string>(*main_cfg));
+              }
+          }
+      } else {
+          auto robots_cfg = gc->controller().config().find("robots");
+          if (!robots_cfg || !robots_cfg->has(name)) {
+              robots_cfg = gc->configuration().config.find("robots");
+          }
+          if (robots_cfg && robots_cfg->has(name)) {
+              auto robot_cfg = (*robots_cfg)(name);
+              if (robot_cfg.has("module")) {
+                  auto mod = robot_cfg("module");
+                  if (mod.isArray()) module_args = mod.operator std::vector<std::string>();
+                  else {
+                      module_args.clear();
+                      module_args.push_back(static_cast<std::string>(mod));
+                  }
+              }
+          }
+      }
+
+      if (module_args.empty()) {
+          module_args.clear();
+          module_args.push_back(gc->controller().robots().robot(name).module().name);
+      }
+
+      try {
+          mc_rtc::log::info("[mc_mujoco] Dynamically syncing bodies for {} using module: {}", name, module_args[0]);
+          auto rm = mc_rbdyn::RobotLoader::get_robot_module(module_args);
+          auto loaded_robots = mc_rbdyn::loadRobots({rm});
+          const auto & robot = loaded_robots->robot();
+
+          auto worldbody = out.child("worldbody");
+          if(worldbody)
+          {
+            for(auto child_body : worldbody.children("body"))
+            {
+              sync_robot_bodies_from_mc_rtc(child_body, robot, name);
+            }
+          }
+      } catch (const std::exception & e) {
+          mc_rtc::log::warning("[mc_mujoco] Failed to load module for {}: {}", name, e.what());
       }
     }
     mjRobots.push_back(mj_robot_from_xml(name, xmlFile, name));

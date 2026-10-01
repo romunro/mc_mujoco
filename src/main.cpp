@@ -11,7 +11,8 @@
 // Replaced boost/program_options.hpp with CLI11
 #include <CLI/CLI.hpp>
 
-bool render_state = true;
+#include <atomic>
+std::atomic<bool> render_state{true};
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
 
@@ -98,7 +99,7 @@ int main(int argc, char * argv[])
   while(render_state)
   {
     mj_sim.updateScene();
-    render_state = mj_sim.render();
+    if(!mj_sim.render()) { render_state = false; }
   }
 
   simThread.join();

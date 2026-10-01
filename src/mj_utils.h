@@ -32,7 +32,7 @@ std::string merge_mujoco_models(const std::map<std::string, std::string> & mujoc
                                 const std::map<std::string, std::string> & mcrtcObjects,
                                 std::vector<MjObject> & mjObjects,
                                 std::vector<MjRobot> & mjRobots,
-                                const mc_rbdyn::Robots * mcRobots = nullptr);
+                                const mc_control::MCGlobalController * gc = nullptr);
 
 /*! Load XML model and initialize */
 bool mujoco_init(MjSimImpl * mj_sim,

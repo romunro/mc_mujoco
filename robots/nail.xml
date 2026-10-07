@@ -20,12 +20,9 @@
     <worldbody>
         <body name="base_link" pos="0 0 -0.1" euler="1.57 0 0">
             <light mode="fixed" directional="false" diffuse=".8 .8 .8" specular="0.3 0.3 0.3" pos="0 0 -4.0" dir="0 0 1" />
-
             <geom class="visual" type="mesh" mesh="nail_mesh" />
-            <geom class="collision" type="mesh" mesh="nail_mesh" />
-
+            <geom class="collision" type="mesh" mesh="nail_mesh" solref="0.05 0.1" />
             <site name="tip_of_nail" size="0.001" pos="0.0 0.0 0" />
-
         </body>
     </worldbody>
 
